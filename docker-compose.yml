@@ -1,0 +1,131 @@
+version: '3.9'
+
+services:
+  backend:
+    build: .
+    container_name: flask_app
+    env_file: .env
+    volumes:
+      - .:/app
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+      - redis
+    command: gunicorn --workers=4 --threads=2 --timeout=60 -b 0.0.0.0:5000 app:app
+    mem_limit: 768m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  mongo:
+    image: mongo:6.0
+    container_name: mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin123
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    command: mongod --bind_ip_all
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7.2
+    container_name: redis
+    command: redis-server --requirepass redis123
+    ports:
+      - "6379:6379"
+    mem_limit: 256m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  celery-jmeter:
+    build: .
+    container_name: celery_jmeter_worker
+    env_file: .env
+    volumes:
+      - .:/app
+    command: celery -A tasks.celery worker -Q jmeter --concurrency=2 --loglevel=info
+    depends_on:
+      - backend
+      - redis
+    mem_limit: 512m
+    cpus: 0.5
+
+  celery-gemini:
+    build: .
+    container_name: celery_gemini_worker
+    env_file: .env
+    volumes:
+      - .:/app
+    command: celery -A tasks.celery worker -Q gemini --concurrency=2 --loglevel=info
+    depends_on:
+      - backend
+      - redis
+    mem_limit: 512m
+    cpus: 0.5
+
+  celery-scheduler:
+    build: .
+    container_name: celery_scheduler_worker
+    env_file: .env
+    volumes:
+      - .:/app
+    command: celery -A tasks.celery worker -Q scheduler --concurrency=1 --loglevel=info
+    depends_on:
+      - backend
+      - redis
+    mem_limit: 256m
+    cpus: 0.25
+
+  celery-beat:
+    build: .
+    container_name: celery_beat
+    env_file: .env
+    volumes:
+      - .:/app
+    command: celery -A tasks.celery beat --loglevel=info
+    depends_on:
+      - backend
+      - redis
+    mem_limit: 256m
+    cpus: 0.25
+
+  flower:
+    build: .
+    container_name: flower_monitor
+    env_file: .env
+    ports:
+      - "5555:5555"
+    command: celery -A tasks.celery flower --port=5555 --basic_auth=admin:admin123
+    depends_on:
+      - redis
+    mem_limit: 256m
+    cpus: 0.25
+
+  jmeter-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.jmeter-runner
+    image: my-jmeter:5.6.3
+    entrypoint: ["echo", "✅ my-jmeter:5.6.3 image built"]
+    mem_limit: 128m
+    cpus: 0.1
+
+volumes:
+  mongo_data:
